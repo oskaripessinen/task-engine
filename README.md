@@ -184,26 +184,27 @@ scripts/
 
 ## Running locally (planned)
 
-### Start infrastructure
+### Start the full stack (Docker Compose)
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml up -d
+docker compose -f deploy/compose/docker-compose.yml up -d --build
 ```
 
-### Apply database migration
+Configuration defaults are in `deploy/compose/.env`.
+
+Migrations run automatically via the `migrate` service. To re-run manually:
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml exec -T postgres \
-  psql -U task -d task < migrations/001_create_jobs.sql
+docker compose -f deploy/compose/docker-compose.yml run --rm migrate
 ```
 
-### Run API
+### Run API locally (optional)
 
 ```bash
 go run ./cmd/api
 ```
 
-### Run worker
+### Run worker locally (optional)
 
 ```bash
 go run ./cmd/worker
