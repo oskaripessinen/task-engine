@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/api/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DB_DSN: postgres://task:task@postgres:5432/task?sslmode=disable
+      REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/worker/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DB_DSN: postgres://task:task@postgres:5432/task?sslmode=disable
+      REDIS_ADDR: redis:6379
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: task
+      POSTGRES_PASSWORD: task
+      POSTGRES_DB: task
+    ports:
+      - "5432:5432"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
