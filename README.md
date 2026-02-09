@@ -2,15 +2,10 @@
 
 A production-oriented distributed task execution platform written in Go.
 
-This repository captures the target architecture and engineering goals for a
-cloud-native task engine. Sections below describe the intended end-state;
-implementation is in progress.
-
 ---
 
 ## Overview
 
-The system is designed to implement an asynchronous job processing
 architecture:
 
 - API service receives and validates jobs
@@ -25,31 +20,9 @@ cloud environments.
 
 ---
 
-## MVP scope and success criteria
 
-### MVP scope
 
-- API supports `POST /jobs` and `GET /jobs/{id}`
-- Jobs are persisted in PostgreSQL and enqueued to Redis
-- Workers pull from the queue, process a stub task, and update job status
-- Basic health endpoint is available
-
-### Success criteria
-
-- Submitting a job returns a job ID
-- A worker transitions the job through `queued -> running -> completed`
-- Job status is queryable via `GET /jobs/{id}`
-- API and worker run locally with Docker Compose dependencies
-
-### Explicitly out of scope for MVP
-
-- Dead-letter queues and advanced retry policy
-- Authentication and authorization
-- Distributed tracing and dashboards
-
----
-
-## Architecture (target)
+## Architecture
 
 ```text
 Client
@@ -57,7 +30,7 @@ Client
   v
 API Service (stateless)
   |
-  +--> PostgreSQL (source of truth)
+  +--> PostgreSQL
   |
   +--> Redis (queue)
              |
@@ -113,7 +86,7 @@ API Service (stateless)
 
 ---
 
-## Tech stack (intended)
+## Tech stack
 
 - Go (concurrency-focused runtime)
 - Redis (message queue)
@@ -124,7 +97,7 @@ API Service (stateless)
 
 ---
 
-## Job lifecycle (target)
+## Job lifecycle
 
 1. Client submits job
 2. API validates and persists job (status = queued)
@@ -137,7 +110,7 @@ API Service (stateless)
 
 ---
 
-## Job data model (MVP)
+## Job data model
 
 ### Fields
 
@@ -157,7 +130,7 @@ API Service (stateless)
 
 ---
 
-## Project structure (target)
+## Project structure
 
 ```text
 cmd/
@@ -182,7 +155,7 @@ scripts/
 
 ---
 
-## Running locally (planned)
+## Running locally
 
 ### Start the full stack (Docker Compose)
 
@@ -232,7 +205,7 @@ curl -s http://localhost:8080/jobs/<job-id>
 
 ---
 
-## Observability (planned)
+## Observability
 
 Metrics endpoint exposed at:
 
@@ -251,7 +224,7 @@ Example tracked metrics:
 
 ---
 
-## Design decisions (intent)
+## Design decisions
 
 - Redis chosen for lightweight queue abstraction
 - PostgreSQL used as authoritative state store
@@ -262,7 +235,7 @@ Example tracked metrics:
 
 ---
 
-## Production considerations (target)
+## Production considerations
 
 - Kubernetes-ready architecture
 - Horizontal Pod Autoscaler compatible
