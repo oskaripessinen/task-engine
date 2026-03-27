@@ -34,6 +34,10 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *Store) CreateJob(ctx context.Context, payload []byte) (job.Job, error) {
 	var created job.Job
 	created.Payload = payload
@@ -73,26 +77,91 @@ func (s *Store) GetJob(ctx context.Context, id string) (job.Job, error) {
 	return fetched, nil
 }
 
-func (s *Store) MarkJobRunning(ctx context.Context, id string) (int, error) {
+func (s *Store) ListJobs(ctx context.Context, limit int) ([]job.Job, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id, payload, status, attempts, created_at, updated_at
+		 FROM jobs
+		 ORDER BY created_at DESC
+		 LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := make([]job.Job, 0, limit)
+	for rows.Next() {
+		var item job.Job
+		if err := rows.Scan(&item.ID, &item.Payload, &item.Status, &item.Attempts, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return jobs, nil
+}
+
+func (s *Store) StartJob(ctx context.Context, id string) (job.Job, error) {
 	row := s.db.QueryRowContext(
 		ctx,
 		`UPDATE jobs
 		 SET status = $2, attempts = attempts + 1, updated_at = now()
 		 WHERE id = $1
-		 RETURNING attempts`,
+		 RETURNING id, payload, status, attempts, created_at, updated_at`,
 		id,
 		job.StatusRunning,
 	)
 
-	var attempts int
-	if err := row.Scan(&attempts); err != nil {
+	var started job.Job
+	if err := row.Scan(&started.ID, &started.Payload, &started.Status, &started.Attempts, &started.CreatedAt, &started.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, ErrNotFound
+			return job.Job{}, ErrNotFound
 		}
-		return 0, err
+		return job.Job{}, err
 	}
 
-	return attempts, nil
+	return started, nil
+}
+
+func (s *Store) RecoverRunningJobs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`UPDATE jobs
+		 SET status = $1, updated_at = now()
+		 WHERE status = $2
+		 RETURNING id`,
+		job.StatusQueued,
+		job.StatusRunning,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return ids, nil
 }
 
 func (s *Store) UpdateJobStatus(ctx context.Context, id string, status job.Status) error {

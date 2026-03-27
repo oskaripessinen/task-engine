@@ -8,10 +8,12 @@ import (
 )
 
 const defaultQueueName = "jobs"
+const defaultDeadLetterQueueName = "jobs:dlq"
 
 type Queue struct {
-	client *redis.Client
-	name   string
+	client         *redis.Client
+	name           string
+	deadLetterName string
 }
 
 func New(addr string) (*Queue, error) {
@@ -21,15 +23,23 @@ func New(addr string) (*Queue, error) {
 		return nil, err
 	}
 
-	return &Queue{client: client, name: defaultQueueName}, nil
+	return &Queue{client: client, name: defaultQueueName, deadLetterName: defaultDeadLetterQueueName}, nil
 }
 
 func (q *Queue) Close() error {
 	return q.client.Close()
 }
 
+func (q *Queue) Ping(ctx context.Context) error {
+	return q.client.Ping(ctx).Err()
+}
+
 func (q *Queue) Enqueue(ctx context.Context, jobID string) error {
 	return q.client.LPush(ctx, q.name, jobID).Err()
+}
+
+func (q *Queue) EnqueueDeadLetter(ctx context.Context, jobID string) error {
+	return q.client.LPush(ctx, q.deadLetterName, jobID).Err()
 }
 
 func (q *Queue) Dequeue(ctx context.Context, timeout time.Duration) (string, error) {

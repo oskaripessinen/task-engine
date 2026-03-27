@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,11 +68,35 @@ func main() {
 		Handler: loggingMiddleware(logger, mux),
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- httpServer.ListenAndServe()
+	}()
+
 	logger.Info("api listening", map[string]any{"addr": addr})
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("server error", err, nil)
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("server error", err, nil)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
+		logger.Info("shutdown requested", nil)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("shutdown error", err, nil)
 		os.Exit(1)
 	}
+
+	logger.Info("api stopped", nil)
 }
 
 type apiServer struct {
@@ -88,16 +116,38 @@ func (s *apiServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
+	checkCtx, cancel := context.WithTimeout(r.Context(), time.Second)
+	defer cancel()
+
+	status := healthResponse{Status: "ok", Database: "ok", Queue: "ok"}
+	httpStatus := http.StatusOK
+
+	if err := s.store.Ping(checkCtx); err != nil {
+		status.Status = "degraded"
+		status.Database = err.Error()
+		httpStatus = http.StatusServiceUnavailable
+	}
+	if err := s.queue.Ping(checkCtx); err != nil {
+		status.Status = "degraded"
+		status.Queue = err.Error()
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	writeJSON(w, httpStatus, status)
 }
 
 func (s *apiServer) jobsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		s.listJobsHandler(w, r)
+	case http.MethodPost:
+		s.createJobHandler(w, r)
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+func (s *apiServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&req); err != nil {
@@ -126,6 +176,27 @@ func (s *apiServer) jobsHandler(w http.ResponseWriter, r *http.Request) {
 	s.metrics.IncJobsEnqueued()
 
 	writeJSON(w, http.StatusCreated, createJobResponse{ID: created.ID})
+}
+
+func (s *apiServer) listJobsHandler(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+
+	jobs, err := s.store.ListJobs(r.Context(), limit)
+	if err != nil {
+		s.logger.Error("list jobs error", err, nil)
+		writeError(w, http.StatusInternalServerError, "failed to list jobs")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, jobs)
 }
 
 func (s *apiServer) jobByIDHandler(w http.ResponseWriter, r *http.Request) {
@@ -216,4 +287,10 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+type healthResponse struct {
+	Status   string `json:"status"`
+	Database string `json:"database"`
+	Queue    string `json:"queue"`
 }
